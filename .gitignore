@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+*.pdb
+BepInEx/
+LogOutput*.log
+Player.log
+MODLOG.md

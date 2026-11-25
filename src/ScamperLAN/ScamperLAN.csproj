@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ScamperLAN</AssemblyName>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <GameDir Condition="'$(GameDir)' == '' and '$(SCAMPER_GAME_DIR)' != ''">$(SCAMPER_GAME_DIR)</GameDir>
+    <BepInExCore>$(GameDir)/BepInEx/core</BepInExCore>
+    <PluginDir>$(GameDir)/BepInEx/plugins</PluginDir>
+    <InstallMod Condition="'$(InstallMod)' == ''">false</InstallMod>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="BepInEx.Core" HintPath="$(BepInExCore)/BepInEx.Core.dll" Private="false" />
+    <Reference Include="BepInEx.Unity.IL2CPP" HintPath="$(BepInExCore)/BepInEx.Unity.IL2CPP.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(BepInExCore)/0Harmony.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="CheckGameReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(GameDir)' == ''" Text="Set -p:GameDir to your Scamper installation or define SCAMPER_GAME_DIR." />
+    <Error Condition="!Exists('$(BepInExCore)/BepInEx.Core.dll') Or !Exists('$(BepInExCore)/BepInEx.Unity.IL2CPP.dll') Or !Exists('$(BepInExCore)/0Harmony.dll')" Text="BepInEx dependencies not found in $(BepInExCore). Set -p:GameDir to your Scamper installation." />
+  </Target>
+  <Target Name="InstallScamperLAN" AfterTargets="Build" Condition="'$(InstallMod)' == 'true'">
+    <MakeDir Directories="$(PluginDir)" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PluginDir)" />
+    <Delete Files="$(PluginDir)/ScamperLAN.Diagnostics.dll" Condition="Exists('$(PluginDir)/ScamperLAN.Diagnostics.dll')" />
+    <Delete Files="$(PluginDir)/ScamperLAN.Diagnostics/ScamperLAN.Diagnostics.dll" Condition="Exists('$(PluginDir)/ScamperLAN.Diagnostics/ScamperLAN.Diagnostics.dll')" />
+    <Message Importance="high" Text="Installed $(TargetFileName) to $(PluginDir)" />
+  </Target>
+</Project>
