@@ -30,28 +30,53 @@ public sealed partial class Plugin
 
     private static string EncodeNativeCode(string address)
     {
-        if (!IsRadminAddress(address)) throw new ArgumentException("Expected Radmin IPv4.");
+        if (!IsRadminAddress(address))
+        {
+            throw new ArgumentException("Expected Radmin IPv4.");
+        }
+
         var b = IPAddress.Parse(address).GetAddressBytes();
         int value = (b[1] << 16) | (b[2] << 8) | b[3];
-        var code = new char[6]; code[0] = 'L';
-        for (int i = 5; i >= 1; i--) { code[i] = CodeDigits[value % 36]; value /= 36; }
+        var code = new char[6];
+        code[0] = 'L';
+        for (int i = 5; i >= 1; i--)
+        {
+            code[i] = CodeDigits[value % 36];
+            value /= 36;
+        }
         return new string(code);
     }
 
     private static bool TryDecodeNativeCode(string input, out string address)
     {
         address = "";
-        if (input == null || input.Length != 6) return false;
+        if (input == null || input.Length != 6)
+        {
+            return false;
+        }
+
         var code = input.ToUpperInvariant();
-        if (code[0] != 'L') return false;
+        if (code[0] != 'L')
+        {
+            return false;
+        }
+
         int value = 0;
         for (int i = 1; i < 6; i++)
         {
             int digit = CodeDigits.IndexOf(code[i]);
-            if (digit < 0) return false;
+            if (digit < 0)
+            {
+                return false;
+            }
+
             value = value * 36 + digit;
         }
-        if (value > 0xFFFFFF) return false;
+        if (value > 0xFFFFFF)
+        {
+            return false;
+        }
+
         address = $"26.{value >> 16}.{(value >> 8) & 255}.{value & 255}";
         return IsRadminAddress(address);
     }
@@ -60,7 +85,11 @@ public sealed partial class Plugin
     {
         try
         {
-            if (!requested || !previewEnabled || multipassType == null) throw new InvalidOperationException("Host transport or native UI setup failed.");
+            if (!requested || !previewEnabled || multipassType == null)
+            {
+                throw new InvalidOperationException("Host transport or native UI setup failed.");
+            }
+
             const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
             nativeSelect = Require(multipassType, "SetClientTransport", typeof(int));
             nativeSetAddress = Require(multipassType, "SetClientAddress", typeof(string), typeof(int));
@@ -68,31 +97,58 @@ public sealed partial class Plugin
             nativeGetAddress = Require(transportType, "GetClientAddress");
             nativeGetPort = Require(transportType, "GetPort");
             if (nativeGetAddress.ReturnType != typeof(string) || nativeGetPort.ReturnType != typeof(ushort) || startMethod?.ReturnType != typeof(bool))
+            {
                 throw new InvalidOperationException("Unknown transport API signature.");
+            }
+
             nativeSetSessionIntent = Require(ct, "set__shouldBeInSession", typeof(bool));
             if (nativeSetSessionIntent.ReturnType != typeof(void) ||
                 ct.GetProperty("ShouldBeInSession", flags)?.PropertyType != typeof(bool))
+            {
                 throw new InvalidOperationException("Unknown session intent API.");
+            }
+
             nativeEnteredCode = ui.GetProperty("currentEnteredJoinCode", flags);
             nativeRefresh = Require(ui, "RefreshJoinCodeUI");
             if (nativeEnteredCode?.PropertyType != typeof(string) || !nativeEnteredCode.CanWrite)
+            {
                 throw new MissingMemberException(ui.FullName, "currentEnteredJoinCode setter");
+            }
+
             var screenType = ui.GetProperty("currentScreenType", flags)?.PropertyType
                 ?? throw new MissingMemberException(ui.FullName, "currentScreenType");
-            if (!screenType.IsEnum) throw new InvalidOperationException("Unexpected TV screen type.");
+            if (!screenType.IsEnum)
+            {
+                throw new InvalidOperationException("Unexpected TV screen type.");
+            }
+
             var changeScreen = Require(ui, "ChangeToScreen", screenType);
-            if (changeScreen.ReturnType != typeof(void)) throw new InvalidOperationException("Unexpected TV screen navigation return type.");
+            if (changeScreen.ReturnType != typeof(void))
+            {
+                throw new InvalidOperationException("Unexpected TV screen navigation return type.");
+            }
+
             harmony!.Patch(changeScreen, postfix: new HarmonyMethod(typeof(Plugin), nameof(NativeJoinCodeScreenChanged)));
             var randomize = Require(ui, "RandomizeJoinCode");
-            if (randomize.ReturnType != typeof(void)) throw new InvalidOperationException("Unexpected randomize method return type.");
+            if (randomize.ReturnType != typeof(void))
+            {
+                throw new InvalidOperationException("Unexpected randomize method return type.");
+            }
+
             harmony!.Patch(randomize, prefix: new HarmonyMethod(typeof(Plugin), nameof(NativeRandomize)));
             if (!TryDecodeNativeCode(nativeHostCode, out var decoded) || decoded != bindAddress)
+            {
                 throw new InvalidOperationException("Address code self-test failed.");
+            }
+
             var recovery = Require(ct, "QueueSessionRecovery", typeof(string));
             var failure = Require(ct, "FailLobbyAttempt", typeof(string), typeof(string), typeof(bool));
             var showError = Require(ui, "ShowMultiplayerConnectionError", typeof(string));
             if (recovery.ReturnType != typeof(void) || failure.ReturnType != typeof(void) || showError.ReturnType != typeof(void))
+            {
                 throw new InvalidOperationException("Unexpected session recovery/error signatures.");
+            }
+
             harmony.Patch(recovery, prefix: new HarmonyMethod(typeof(Plugin), nameof(NativeRecovery)));
             harmony.Patch(failure, prefix: new HarmonyMethod(typeof(Plugin), nameof(NativeFailureTrace)));
             harmony.Patch(showError, prefix: new HarmonyMethod(typeof(Plugin), nameof(NativeErrorTrace)));
@@ -100,56 +156,109 @@ public sealed partial class Plugin
             nativeReady = true;
             Log.LogInfo($"[LAN NATIVE] Ready. Own host code: {nativeHostCode}. Type Code opens prefilled; Enter hosts, or replace the code to join. Randomize restores your code. No automatic join. Close game to leave.");
         }
-        catch (Exception ex) { nativeReady = false; Log.LogError("[LAN NATIVE] Setup refused; do not use online controls. Disable LAN config and restart for vanilla: " + ex); }
+        catch (Exception ex)
+        {
+            nativeReady = false;
+            Log.LogError("[LAN NATIVE] Setup refused; do not use online controls. Disable LAN config and restart for vanilla: " + ex);
+        }
     }
 
     public static bool NativeRandomize(object __instance)
     {
-        if (!nativeMode) return true;
-        if (!nativeReady || menuStarted || nativeClientRequested) return false;
-        try { nativeEnteredCode!.SetValue(__instance, nativeHostCode); nativeRefresh!.Invoke(__instance, null); }
-        catch (Exception ex) { logger?.LogError("[LAN NATIVE] Could not fill host code; type the logged code manually: " + ex.Message); }
+        if (!nativeMode)
+        {
+            return true;
+        }
+
+        if (!nativeReady || menuStarted || nativeClientRequested)
+        {
+            return false;
+        }
+
+        try
+        {
+            nativeEnteredCode!.SetValue(__instance, nativeHostCode);
+            nativeRefresh!.Invoke(__instance, null);
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError("[LAN NATIVE] Could not fill host code; type the logged code manually: " + ex.Message);
+        }
         return false;
     }
 
     public static void NativeJoinCodeScreenChanged(object __instance, object __0)
     {
-        if (!nativeMode || !nativeReady || nativeJoinCodePrefilled || __0?.ToString() != "JoinCode") return;
+        if (!nativeMode || !nativeReady || nativeJoinCodePrefilled || __0?.ToString() != "JoinCode")
+        {
+            return;
+        }
+
         nativeJoinCodePrefilled = true;
         try
         {
             var current = nativeEnteredCode?.GetValue(__instance) as string;
-            if (!string.IsNullOrWhiteSpace(current)) return;
+            if (!string.IsNullOrWhiteSpace(current))
+            {
+                return;
+            }
+
             nativeEnteredCode!.SetValue(__instance, nativeHostCode);
             nativeRefresh!.Invoke(__instance, null);
             logger?.LogInfo("[LAN NATIVE] Filled the empty TV code field with this PC's host code; replace it with another host's code to join.");
         }
-        catch (Exception ex) { logger?.LogWarning("[LAN NATIVE] Could not prefill the TV code field: " + ex.Message); }
+        catch (Exception ex)
+        {
+            logger?.LogWarning("[LAN NATIVE] Could not prefill the TV code field: " + ex.Message);
+        }
     }
 
     private static bool NativeCodeSubmission(object ui, string code)
     {
         if (!nativeReady || menuStarted || nativeClientRequested || connector == null)
-        { logger?.LogWarning("[LAN NATIVE] Not ready or session already requested; close game to reset."); return false; }
+        {
+            logger?.LogWarning("[LAN NATIVE] Not ready or session already requested; close game to reset.");
+            return false;
+        }
         try
         {
-            if (!TryDecodeNativeCode(code, out var address)) { logger?.LogWarning("[LAN NATIVE] Invalid LAN code; use the host's six-character L code."); return false; }
-            if (!LocalRadminAddresses().Contains(bindAddress, StringComparer.Ordinal)) throw new InvalidOperationException("Radmin interface changed; restart the game.");
+            if (!TryDecodeNativeCode(code, out var address))
+            {
+                logger?.LogWarning("[LAN NATIVE] Invalid LAN code; use the host's six-character L code.");
+                return false;
+            }
+            if (!LocalRadminAddresses().Contains(bindAddress, StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException("Radmin interface changed; restart the game.");
+            }
+
             if (!ReadFlag("IsLobbyBrowserReady") || new[] { "IsPlayerInLobby", "IsJoiningMultiplayer", "IsSingleplayer", "IsStartingSingleplayer", "IsClientConnectedToServer", "HasValidRemoteSession", "ShouldBeInSession" }.Any(ReadFlag))
+            {
                 throw new InvalidOperationException("Game not idle or startup not ready. Wait until main menu; never join from an active session.");
-            if (address == bindAddress) return true;
+            }
+
+            if (address == bindAddress)
+            {
+                return true;
+            }
+
             using (var probe = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
             {
                 probe.Connect(IPAddress.Parse(address), TestPort);
                 if (probe.LocalEndPoint is not IPEndPoint ep || ep.Address.ToString() != bindAddress)
+                {
                     throw new InvalidOperationException("Route to host does not use Radmin.");
+                }
             }
             var nm = UiProperty(connector, "NetworkManager") ?? throw new InvalidOperationException("NetworkManager unavailable.");
             var tm = UiProperty(nm, "TransportManager") ?? throw new InvalidOperationException("TransportManager unavailable.");
             var raw = UiProperty(tm, "Transport") ?? throw new InvalidOperationException("Transport unavailable.");
             object mp = NativeCastMultipass(raw);
             if (new[] { YakIndex, TugboatIndex }.Any(i => State(mp, true, i) != "Stopped" || State(mp, false, i) != "Stopped"))
+            {
                 throw new InvalidOperationException("Transport already active; restart before joining.");
+            }
+
             var tug = getTransportMethod!.Invoke(mp, new object[] { TugboatIndex }) ?? throw new InvalidOperationException("Tugboat missing.");
             nativeClientRequested = true;
             nativeRequestedAddress = address;
@@ -166,48 +275,116 @@ public sealed partial class Plugin
             nativeSetAddress!.Invoke(mp, new object[] { address, TugboatIndex });
             if (!string.Equals(nativeGetAddress!.Invoke(tug, null) as string, address, StringComparison.Ordinal) ||
                 nativeGetPort!.Invoke(tug, null) is not ushort port || port != TestPort)
+            {
                 throw new InvalidOperationException("Client endpoint verification failed.");
+            }
+
             logger?.LogInfo($"[LAN NATIVE] TV requested client connection to {address}:{TestPort} (code {code.ToUpperInvariant()}); admission unchanged.");
             nativeIntentConnector = connector;
             nativeSetSessionIntent!.Invoke(nativeIntentConnector, new object[] { true });
-            if (!ReadFlag("ShouldBeInSession")) throw new InvalidOperationException("Session intent did not register.");
+            if (!ReadFlag("ShouldBeInSession"))
+            {
+                throw new InvalidOperationException("Session intent did not register.");
+            }
+
             logger?.LogInfo("[LAN NATIVE] Local join intent registered; cloud membership and admission unchanged.");
             nativeClientSubmitted = startMethod!.Invoke(mp, new object[] { false, TugboatIndex }) is true;
             logger?.LogInfo("[LAN NATIVE] Client start result=" + nativeClientSubmitted);
-            if (!nativeClientSubmitted) StopNativeClient();
+            if (!nativeClientSubmitted)
+            {
+                StopNativeClient();
+            }
         }
         catch (Exception ex)
         {
             logger?.LogError("[LAN NATIVE] Connection refused or failed: " + ex);
-            if (nativeClientRequested) StopNativeClient();
+            if (nativeClientRequested)
+            {
+                StopNativeClient();
+            }
         }
         return false;
     }
 
     public static bool NativeRecovery(object __instance, string __0)
     {
-        if (!nativeMode || !nativeClientRequested) return true;
+        if (!nativeMode || !nativeClientRequested)
+        {
+            return true;
+        }
+
         try
         {
             logger?.LogInfo("[LAN RECOVERY TRACE] Enter reason=" + __0);
             if (!string.Equals(__0, CloudConsistencyReason, StringComparison.Ordinal))
+            {
                 return RecoveryFallback("reason differs from periodic consistency check");
-            if (!nativeClientSubmitted) return RecoveryFallback("client start has not returned success");
-            if (nativeIntentConnector == null || nativeClientMultipass == null) return RecoveryFallback("missing local join owner or transport");
-            if (!SameNativeInstance(__instance, nativeIntentConnector)) return RecoveryFallback("connector instance differs");
-            if (ReadJoinFlag(__instance, "IsPlayerInLobby")) return RecoveryFallback("cloud lobby exists");
-            if (ReadJoinFlag(__instance, "HasValidRemoteSession")) return RecoveryFallback("native remote session exists");
-            if (ReadJoinFlag(__instance, "IsSingleplayer")) return RecoveryFallback("singleplayer session");
-            if (!ReadJoinFlag(__instance, "ShouldBeInSession")) return RecoveryFallback("session intent already cleared");
-            if (!ReadJoinFlag(__instance, "IsClientConnectedToServer")) return RecoveryFallback("connector does not report connected");
+            }
+
+            if (!nativeClientSubmitted)
+            {
+                return RecoveryFallback("client start has not returned success");
+            }
+
+            if (nativeIntentConnector == null || nativeClientMultipass == null)
+            {
+                return RecoveryFallback("missing local join owner or transport");
+            }
+
+            if (!SameNativeInstance(__instance, nativeIntentConnector))
+            {
+                return RecoveryFallback("connector instance differs");
+            }
+
+            if (ReadJoinFlag(__instance, "IsPlayerInLobby"))
+            {
+                return RecoveryFallback("cloud lobby exists");
+            }
+
+            if (ReadJoinFlag(__instance, "HasValidRemoteSession"))
+            {
+                return RecoveryFallback("native remote session exists");
+            }
+
+            if (ReadJoinFlag(__instance, "IsSingleplayer"))
+            {
+                return RecoveryFallback("singleplayer session");
+            }
+
+            if (!ReadJoinFlag(__instance, "ShouldBeInSession"))
+            {
+                return RecoveryFallback("session intent already cleared");
+            }
+
+            if (!ReadJoinFlag(__instance, "IsClientConnectedToServer"))
+            {
+                return RecoveryFallback("connector does not report connected");
+            }
+
             string clientState = State(nativeClientMultipass, false, TugboatIndex);
             string serverState = State(nativeClientMultipass, true, TugboatIndex);
-            if (clientState != "Started" || serverState != "Stopped") return RecoveryFallback("transport state: client=" + clientState + " server=" + serverState);
-            if (!IsRadminAddress(nativeRequestedAddress) || !LocalRadminAddresses().Contains(bindAddress, StringComparer.Ordinal)) return RecoveryFallback("Radmin address changed");
+            if (clientState != "Started" || serverState != "Stopped")
+            {
+                return RecoveryFallback("transport state: client=" + clientState + " server=" + serverState);
+            }
+
+            if (!IsRadminAddress(nativeRequestedAddress) || !LocalRadminAddresses().Contains(bindAddress, StringComparer.Ordinal))
+            {
+                return RecoveryFallback("Radmin address changed");
+            }
+
             var tug = getTransportMethod!.Invoke(nativeClientMultipass, new object[] { TugboatIndex });
-            if (tug == null) return RecoveryFallback("Tugboat unavailable");
+            if (tug == null)
+            {
+                return RecoveryFallback("Tugboat unavailable");
+            }
+
             string? target = nativeGetAddress!.Invoke(tug, null) as string;
-            if (!string.Equals(target, nativeRequestedAddress, StringComparison.Ordinal)) return RecoveryFallback("endpoint differs: actual=" + target + " expected=" + nativeRequestedAddress);
+            if (!string.Equals(target, nativeRequestedAddress, StringComparison.Ordinal))
+            {
+                return RecoveryFallback("endpoint differs: actual=" + target + " expected=" + nativeRequestedAddress);
+            }
+
             var nm = UiProperty(__instance, "NetworkManager");
             var cm = nm == null ? null : UiProperty(nm, "ClientManager");
             var connection = cm == null ? null : UiProperty(cm, "Connection");
@@ -215,7 +392,11 @@ public sealed partial class Plugin
             if (!authenticated)
             {
                 if (nativeEverAuthenticated || !nativeClientClock.IsRunning ||
-                    nativeClientClock.Elapsed.TotalSeconds >= AdmissionDeadlineSeconds) return RecoveryFallback("admission grace unavailable: previouslyAuthenticated=" + nativeEverAuthenticated + " elapsed=" + nativeClientClock.Elapsed.TotalSeconds);
+                    nativeClientClock.Elapsed.TotalSeconds >= AdmissionDeadlineSeconds)
+                {
+                    return RecoveryFallback("admission grace unavailable: previouslyAuthenticated=" + nativeEverAuthenticated + " elapsed=" + nativeClientClock.Elapsed.TotalSeconds);
+                }
+
                 if (!nativePendingHealthLogged)
                 {
                     nativePendingHealthLogged = true;
@@ -246,7 +427,11 @@ public sealed partial class Plugin
 
     private static bool SameNativeInstance(object first, object second)
     {
-        if (ReferenceEquals(first, second)) return true;
+        if (ReferenceEquals(first, second))
+        {
+            return true;
+        }
+
         return UiProperty(first, "Pointer") is IntPtr a && a != IntPtr.Zero && UiProperty(second, "Pointer") is IntPtr b && a == b;
     }
 
@@ -261,23 +446,42 @@ public sealed partial class Plugin
 
     public static void NativeErrorTrace(string __0)
     {
-        if (nativeMode && nativeClientRequested) logger?.LogWarning("[LAN UI ERROR] " + __0);
+        if (nativeMode && nativeClientRequested)
+        {
+            logger?.LogWarning("[LAN UI ERROR] " + __0);
+        }
     }
 
     private static object NativeCastMultipass(object raw)
     {
-        if (multipassType!.IsInstanceOfType(raw)) return raw;
+        if (multipassType!.IsInstanceOfType(raw))
+        {
+            return raw;
+        }
+
         var cast = raw.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .SingleOrDefault(m => m.Name == "TryCast" && m.IsGenericMethodDefinition && m.GetGenericArguments().Length == 1 && m.GetParameters().Length == 0);
-        if (cast == null) throw new InvalidOperationException("IL2CPP TryCast unavailable.");
+        if (cast == null)
+        {
+            throw new InvalidOperationException("IL2CPP TryCast unavailable.");
+        }
+
         var result = cast.MakeGenericMethod(multipassType).Invoke(raw, null);
-        if (result == null || !multipassType.IsInstanceOfType(result)) throw new InvalidOperationException("Active transport is not Multipass.");
+        if (result == null || !multipassType.IsInstanceOfType(result))
+        {
+            throw new InvalidOperationException("Active transport is not Multipass.");
+        }
+
         return result;
     }
 
     private static void NativeClientTick(object ui)
     {
-        if (!nativeClientClock.IsRunning || nativeClientClock.ElapsedMilliseconds < nativeNextPoll) return;
+        if (!nativeClientClock.IsRunning || nativeClientClock.ElapsedMilliseconds < nativeNextPoll)
+        {
+            return;
+        }
+
         nativeNextPoll = nativeClientClock.ElapsedMilliseconds + 500;
         try
         {
@@ -286,12 +490,27 @@ public sealed partial class Plugin
             var cm = nm == null ? null : UiProperty(nm, "ClientManager");
             var connection = cm == null ? null : UiProperty(cm, "Connection");
             bool authenticated = connection != null && UiProperty(connection, "IsAuthenticated") is true;
-            if (authenticated && state == "Started") nativeEverAuthenticated = true;
+            if (authenticated && state == "Started")
+            {
+                nativeEverAuthenticated = true;
+            }
+
             if (authenticated && state == "Started" && !nativeClientLobbyAttempted)
+            {
                 ShowNativeClientLobby(ui);
-            if (state == "Stopped") ReleaseNativeIntent();
+            }
+
+            if (state == "Stopped")
+            {
+                ReleaseNativeIntent();
+            }
+
             string snapshot = $"UDP={state}; submitted={nativeClientSubmitted}; authenticated={authenticated}; " + JoinSnapshot(connector!) + ReadProperties(connector, "ShouldBeInSession");
-            if (snapshot != nativeLastClientState) { nativeLastClientState = snapshot; logger?.LogInfo("[LAN NATIVE CLIENT] " + snapshot); }
+            if (snapshot != nativeLastClientState)
+            {
+                nativeLastClientState = snapshot;
+                logger?.LogInfo("[LAN NATIVE CLIENT] " + snapshot);
+            }
             if (nativeClientClock.Elapsed.TotalSeconds >= AdmissionDeadlineSeconds && !nativeTimeoutLogged)
             {
                 nativeTimeoutLogged = true;
@@ -305,7 +524,14 @@ public sealed partial class Plugin
                 }
             }
         }
-        catch (Exception ex) { if (!nativeProbeErrorLogged) { nativeProbeErrorLogged = true; logger?.LogWarning("[LAN NATIVE CLIENT] State probe failed: " + ex.Message); } }
+        catch (Exception ex)
+        {
+            if (!nativeProbeErrorLogged)
+            {
+                nativeProbeErrorLogged = true;
+                logger?.LogWarning("[LAN NATIVE CLIENT] State probe failed: " + ex.Message);
+            }
+        }
     }
 
     private static void ShowNativeClientLobby(object ui)
@@ -325,7 +551,10 @@ public sealed partial class Plugin
             var code = UiProperty(ui, "joinCodeText");
             var text = code?.GetType().GetProperty("text", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (text?.CanWrite == true && text.PropertyType == typeof(string))
+            {
                 text.SetValue(code, nativeRequestedCode);
+            }
+
             logger?.LogInfo("[LAN NATIVE CLIENT] Authenticated; opened the game's existing Connected lobby screen with the host's LAN code.");
         }
         catch (Exception ex)
@@ -337,19 +566,34 @@ public sealed partial class Plugin
     private static void ReleaseNativeIntent()
     {
         var owner = nativeIntentConnector;
-        if (owner == null) return;
+        if (owner == null)
+        {
+            return;
+        }
+
         try
         {
             if (ReadJoinFlag(owner, "IsPlayerInLobby") || ReadJoinFlag(owner, "HasValidRemoteSession"))
-            { logger?.LogWarning("[LAN NATIVE] Session ownership changed; leaving native intent untouched."); nativeIntentConnector = null; return; }
+            {
+                logger?.LogWarning("[LAN NATIVE] Session ownership changed; leaving native intent untouched.");
+                nativeIntentConnector = null;
+                return;
+            }
             nativeSetSessionIntent!.Invoke(owner, new object[] { false });
-            if (ReadJoinFlag(owner, "ShouldBeInSession")) throw new InvalidOperationException("Session intent remained set.");
+            if (ReadJoinFlag(owner, "ShouldBeInSession"))
+            {
+                throw new InvalidOperationException("Session intent remained set.");
+            }
+
             nativeIntentConnector = null;
             nativeLocalHealthLogged = false;
             nativePendingHealthLogged = false;
             logger?.LogInfo("[LAN NATIVE] Local join intent released.");
         }
-        catch (Exception ex) { logger?.LogWarning("[LAN NATIVE] Intent cleanup failed; close game: " + ex.Message); }
+        catch (Exception ex)
+        {
+            logger?.LogWarning("[LAN NATIVE] Intent cleanup failed; close game: " + ex.Message);
+        }
     }
 
     private static void StopNativeClient()
@@ -357,8 +601,21 @@ public sealed partial class Plugin
         ReleaseNativeIntent();
         var mp = nativeClientMultipass;
         nativeClientMultipass = null;
-        if (mp == null) return;
-        try { if (State(mp, false, TugboatIndex) != "Stopped") stopMethod!.Invoke(mp, new object[] { false, TugboatIndex }); }
-        catch (Exception ex) { logger?.LogWarning("[LAN NATIVE CLIENT] Stop failed; close game: " + ex.Message); }
+        if (mp == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (State(mp, false, TugboatIndex) != "Stopped")
+            {
+                stopMethod!.Invoke(mp, new object[] { false, TugboatIndex });
+            }
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning("[LAN NATIVE CLIENT] Stop failed; close game: " + ex.Message);
+        }
     }
 }

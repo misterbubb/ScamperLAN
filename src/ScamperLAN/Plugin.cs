@@ -38,7 +38,11 @@ public sealed partial class Plugin : BasePlugin
         nativeMode = Config.Bind("LAN", "Enabled", true, "Enable the experimental TV-driven LAN mode (default: true). False preserves vanilla matchmaking. Restart after changing.").Value || Environment.GetCommandLineArgs().Contains("--scamperlan-native", StringComparer.Ordinal);
         Log.LogInfo(nativeMode ? "[LAN] Native LAN mode enabled; use the TV to host or join." : "[LAN] Native LAN mode disabled by configuration.");
         SetupHostTest();
-        if (!nativeMode) SetupJoinTest();
+        if (!nativeMode)
+        {
+            SetupJoinTest();
+        }
+
         SetupMenuHostTest();
         if (nativeMode)
         {
@@ -63,11 +67,19 @@ public sealed partial class Plugin : BasePlugin
             var loaded = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == assembly)
                 ?? Assembly.Load(assembly);
             var type = loaded.GetType(typeName, false);
-            if (type == null) { Log.LogWarning("Missing type: " + typeName); return; }
+            if (type == null)
+            {
+                Log.LogWarning("Missing type: " + typeName);
+                return;
+            }
             foreach (var name in names)
             {
                 var methods = type.GetMethods(All).Where(m => m.Name == name && !m.IsGenericMethod && !m.IsAbstract).ToArray();
-                if (methods.Length == 0) Log.LogWarning("Missing method: " + typeName + "." + name);
+                if (methods.Length == 0)
+                {
+                    Log.LogWarning("Missing method: " + typeName + "." + name);
+                }
+
                 foreach (var method in methods)
                 {
                     try
@@ -76,11 +88,17 @@ public sealed partial class Plugin : BasePlugin
                             postfix: new HarmonyMethod(typeof(Plugin), nameof(After)));
                         Log.LogInfo("Hooked: " + Describe(method));
                     }
-                    catch (Exception ex) { Log.LogWarning("Hook failed: " + Describe(method) + " | " + ex.GetType().Name + ": " + ex.Message); }
+                    catch (Exception ex)
+                    {
+                        Log.LogWarning("Hook failed: " + Describe(method) + " | " + ex.GetType().Name + ": " + ex.Message);
+                    }
                 }
             }
         }
-        catch (Exception ex) { Log.LogWarning("Cannot inspect " + typeName + " | " + ex.GetType().Name + ": " + ex.Message); }
+        catch (Exception ex)
+        {
+            Log.LogWarning("Cannot inspect " + typeName + " | " + ex.GetType().Name + ": " + ex.Message);
+        }
     }
 
     private void WatchTransportSelection()
@@ -93,16 +111,26 @@ public sealed partial class Plugin : BasePlugin
             void Add(string name, Type[] signature, string hook)
             {
                 var method = type.GetMethod(name, All, null, signature, null);
-                if (method == null) { Log.LogWarning("Transport detail hook unavailable: " + name); return; }
+                if (method == null)
+                {
+                    Log.LogWarning("Transport detail hook unavailable: " + name);
+                    return;
+                }
                 try
                 {
                     harmony!.Patch(method, prefix: new HarmonyMethod(typeof(Plugin), hook));
                     Log.LogInfo("Transport detail hook installed: " + Describe(method));
                 }
-                catch (Exception ex) { Log.LogWarning("Transport detail hook failed: " + name + " | " + ex.Message); }
+                catch (Exception ex)
+                {
+                    Log.LogWarning("Transport detail hook failed: " + name + " | " + ex.Message);
+                }
             }
         }
-        catch (Exception ex) { Log.LogWarning("Transport detail setup failed: " + ex.Message); }
+        catch (Exception ex)
+        {
+            Log.LogWarning("Transport detail setup failed: " + ex.Message);
+        }
     }
 
     public static void TraceSelect(int __0) =>
@@ -122,25 +150,47 @@ public sealed partial class Plugin : BasePlugin
             var name = __originalMethod.DeclaringType?.Name;
             var info = "";
             if (name == "ScamperServerConnectorPlayflow")
+            {
                 info = ReadProperties(__instance, "IsSingleplayer", "IsStartingSingleplayer", "IsHost", "IsServerInstance", "IsClientConnectedToServer");
-            else if (name is "ServerManager" or "ClientManager") info = ReadProperties(__instance, "Started");
+            }
+            else if (name is "ServerManager" or "ClientManager")
+            {
+                info = ReadProperties(__instance, "Started");
+            }
             else if (name == "Tugboat" && __instance != null)
             {
                 var method = __instance.GetType().GetMethod("GetPort", Type.EmptyTypes);
-                if (method != null) info = " port=" + method.Invoke(__instance, null);
+                if (method != null)
+                {
+                    info = " port=" + method.Invoke(__instance, null);
+                }
             }
             logger?.LogInfo("[LAN TRACE] EXIT " + Describe(__originalMethod) + info);
         }
-        catch (Exception ex) { logger?.LogWarning("[LAN TRACE] Snapshot unavailable: " + ex.GetType().Name); }
+        catch (Exception ex)
+        {
+            logger?.LogWarning("[LAN TRACE] Snapshot unavailable: " + ex.GetType().Name);
+        }
     }
 
     private static string ReadProperties(object? instance, params string[] names)
     {
-        if (instance == null) return "";
+        if (instance == null)
+        {
+            return "";
+        }
+
         return string.Concat(names.Select(n =>
         {
-            try { var p = instance.GetType().GetProperty(n, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic); return p?.PropertyType == typeof(bool) ? " " + n + "=" + p.GetValue(instance) : ""; }
-            catch { return " " + n + "=unavailable"; }
+            try
+            {
+                var p = instance.GetType().GetProperty(n, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                return p?.PropertyType == typeof(bool) ? " " + n + "=" + p.GetValue(instance) : "";
+            }
+            catch
+            {
+                return " " + n + "=unavailable";
+            }
         }));
     }
 

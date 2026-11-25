@@ -18,7 +18,10 @@ public sealed partial class Plugin
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
                 null, Type.EmptyTypes, null);
             if (barrier == null || !barrier.IsStatic || barrier.ReturnType != typeof(bool))
+            {
                 throw new MissingMethodException(zone.FullName, "ShouldUseRoundStartLoadBarrier() : bool");
+            }
+
             harmony!.Patch(barrier, postfix: new HarmonyMethod(typeof(Plugin), nameof(LanRoundBarrierPostfix)));
             Log.LogInfo("[LAN ROUND SYNC] Native round barrier selector hook installed.");
         }
@@ -32,10 +35,17 @@ public sealed partial class Plugin
         {
             var zone = Assembly.Load("BezbroGames.Scamper").GetType("StartZone", true)!;
             var capture = Require(zone, "CaptureRoundStartParticipants_Server");
-            if (capture.ReturnType != typeof(void)) throw new InvalidOperationException("Unexpected participant capture signature.");
+            if (capture.ReturnType != typeof(void))
+            {
+                throw new InvalidOperationException("Unexpected participant capture signature.");
+            }
+
             harmony!.Patch(capture, postfix: new HarmonyMethod(typeof(Plugin), nameof(LanRoundParticipantsPostfix)));
         }
-        catch (Exception ex) { Log.LogWarning("[LAN ROUND SYNC] Participant trace unavailable: " + ex.Message); }
+        catch (Exception ex)
+        {
+            Log.LogWarning("[LAN ROUND SYNC] Participant trace unavailable: " + ex.Message);
+        }
         Watch("BezbroGames.Scamper", "StartZone", "CommitStartGameServer",
             "BeginRoundStartBlackoutBarrier_Server", "BeginRoundStartLoadBarrier_Server",
             "RpcLogic___StartRoundStartVisualSequence_Client_508783514",
@@ -49,13 +59,25 @@ public sealed partial class Plugin
     private static bool IsActiveRoundLanHost()
     {
         if (!nativeMode || !nativeReady || !requested || !menuStarted || !attempted || stopping ||
-            nativeClientRequested || connector == null || testMultipass == null) return false;
+            nativeClientRequested || connector == null || testMultipass == null)
+        {
+            return false;
+        }
+
         if (!ReadFlag("IsSingleplayer") || ReadFlag("IsStartingSingleplayer") ||
-            ReadFlag("IsPlayerInLobby") || ReadFlag("HasValidRemoteSession") || !ReadFlag("IsClientConnectedToServer")) return false;
+            ReadFlag("IsPlayerInLobby") || ReadFlag("HasValidRemoteSession") || !ReadFlag("IsClientConnectedToServer"))
+        {
+            return false;
+        }
+
         if (State(testMultipass, true, YakIndex) != "Started" ||
             State(testMultipass, false, YakIndex) != "Started" ||
             State(testMultipass, true, TugboatIndex) != "Started" ||
-            State(testMultipass, false, TugboatIndex) != "Stopped") return false;
+            State(testMultipass, false, TugboatIndex) != "Stopped")
+        {
+            return false;
+        }
+
         var nm = UiProperty(connector, "NetworkManager");
         var cm = nm == null ? null : UiProperty(nm, "ClientManager");
         var sm = nm == null ? null : UiProperty(nm, "ServerManager");
@@ -66,10 +88,18 @@ public sealed partial class Plugin
 
     public static void LanRoundBarrierPostfix(ref bool __result)
     {
-        if (__result) return;
+        if (__result)
+        {
+            return;
+        }
+
         try
         {
-            if (!IsActiveRoundLanHost()) { lanRoundGateLogged = false; return; }
+            if (!IsActiveRoundLanHost())
+            {
+                lanRoundGateLogged = false;
+                return;
+            }
             __result = true;
             if (!lanRoundGateLogged)
             {
@@ -91,7 +121,11 @@ public sealed partial class Plugin
     {
         try
         {
-            if (!IsActiveRoundLanHost()) return;
+            if (!IsActiveRoundLanHost())
+            {
+                return;
+            }
+
             var ids = UiProperty(__instance, "_roundStartParticipantClientIds");
             var count = ids == null ? null : UiProperty(ids, "Count");
             var nm = UiProperty(connector!, "NetworkManager");
@@ -100,6 +134,9 @@ public sealed partial class Plugin
             var connected = clients == null ? null : UiProperty(clients, "Count");
             logger?.LogInfo($"[LAN ROUND SYNC] Native participant snapshot count={count ?? "unavailable"}; connected FishNet clients={connected ?? "unavailable"}. No participants added by mod.");
         }
-        catch (Exception ex) { logger?.LogWarning("[LAN ROUND SYNC] Participant snapshot unavailable: " + ex.Message); }
+        catch (Exception ex)
+        {
+            logger?.LogWarning("[LAN ROUND SYNC] Participant snapshot unavailable: " + ex.Message);
+        }
     }
 }
