@@ -23,5 +23,5 @@ LAN rooms appear in **Find Code** automatically. If a firewall blocks LAN traffi
 
 ## Credits
 
-- **Contributors** — misterbubb and J_axon
+- **Contributors** - misterbubb and J_axon
 - **J_axon** - Major help with testing this with me, love you bro bro.
