@@ -17,21 +17,23 @@ public sealed partial class Plugin
     private static bool menuUiError;
     private static bool previewEnabled, previewAttempted;
     private static MethodInfo? previewNavigate, previewSetState, previewStopPolling;
+    private static MethodInfo? stopFindCodeRefresh, startAutoJoinPolling;
     private static object? previewMain, previewConnected;
     private static string? lastPreviewState;
     private static Type? previewSyncType;
-    private static MethodInfo? previewApplyPrivacy;
-    private static bool previewPrivacyApplied;
     private static int? lastPreviewCount;
     private static bool previewDetailsError;
     private static bool roundUiRunning, restoreAfterRound, lastReady, keypadStatusWritten;
     private static MethodInfo? refreshKeypad;
+    private static object? lanModeToggleRoot, lanModeToggleText, lanModeToggleUi;
+    private static float lanModeToggleFontSize;
+    private static string? onlineCodeBeforeLan;
     private static readonly System.Collections.Generic.HashSet<string> reportedBlockedActions = new();
     private static string? lastRoundState, lastRoundUiEvent;
 
     private void SetupMenuHostTest()
     {
-        if (!nativeMode && !Environment.GetCommandLineArgs().Contains("--scamperlan-menu-host-test", StringComparer.Ordinal))
+        if (!lanSupportEnabled && !Environment.GetCommandLineArgs().Contains("--scamperlan-menu-host-test", StringComparer.Ordinal))
         {
             return;
         }
@@ -66,12 +68,12 @@ public sealed partial class Plugin
                 harmony.Patch(entry, prefix: new HarmonyMethod(typeof(Plugin), nameof(BlockOnlineEntry)));
             }
             menuRequested = requested;
-            if (nativeMode || Environment.GetCommandLineArgs().Contains("--scamperlan-menu-preview", StringComparer.Ordinal))
+            if (lanSupportEnabled || Environment.GetCommandLineArgs().Contains("--scamperlan-menu-preview", StringComparer.Ordinal))
             {
                 SetupLocalPreview(ui, ct);
             }
 
-            if (nativeMode)
+            if (lanSupportEnabled)
             {
                 SetupNativeMenu(ui, ct);
                 return;
@@ -92,11 +94,35 @@ public sealed partial class Plugin
         }
     }
 
-    public static bool BlockOnlineEntry() => false;
+    public static bool BlockOnlineEntry() => !lanModeSelected;
+
+    public static void LanLeavePostfix()
+    {
+        if (!lanModeSelected)
+        {
+            return;
+        }
+
+        StopNativeClient();
+        StopHostTest();
+        ResetLanHosting();
+        menuStarted = false;
+        menuUi = null;
+        attempted = false;
+        menuClock.Reset();
+        nextMenuPoll = 0;
+        lastMenuState = null;
+        lastReady = false;
+        previewAttempted = false;
+        restoreAfterRound = false;
+        roundUiRunning = false;
+        keypadStatusWritten = false;
+        logger?.LogInfo("[LAN] Left the session. LAN mode is still selected.");
+    }
 
     private void SetupLocalPreview(Type ui, Type ct)
     {
-        if (!requested || (!nativeMode && bindAddress != "127.0.0.1"))
+        if (!requested || (!lanSupportEnabled && bindAddress != "127.0.0.1"))
         {
             Log.LogWarning("[LAN PREVIEW] Requires a loopback host. Preview disabled.");
             return;
@@ -111,6 +137,8 @@ public sealed partial class Plugin
             previewSetState = ui.GetMethods(f).Single(m => m.Name == "SetLobbyUiState" && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType.IsEnum);
             previewConnected = Enum.Parse(previewSetState.GetParameters()[0].ParameterType, "Connected");
             previewStopPolling = Require(ui, "StopAutoJoinPolling");
+            startAutoJoinPolling = Require(ui, "StartAutoJoinPolling");
+            stopFindCodeRefresh = Require(ui, "StopFindCodeLobbyRefresh");
             refreshKeypad = Require(ui, "RefreshJoinCodeUI");
             var gc = ui.Assembly.GetType("BezbroGames.Scamper.Core.GameController", true)!;
             foreach (var name in new[] { "IsRoundActiveOrSynced", "IsRoundStartTransitionActive" })
@@ -123,8 +151,19 @@ public sealed partial class Plugin
 
             harmony!.Patch(Require(ui, "ApplyRoundStateUI", typeof(bool), typeof(bool)),
                 postfix: new HarmonyMethod(typeof(Plugin), nameof(TrackRoundUi)));
-            var guards = new[]{"StartAutoJoinPolling","RequestFindCodeLobbyList","CreateNewFindCode",
-                "Leave","PromoteSubject","KickSubject","ReportSubject"}.Select(n => Require(ui, n)).ToList();
+            var guards = new[]{"StartAutoJoinPolling",
+                "PromoteSubject","KickSubject","ReportSubject"}.Select(n => Require(ui, n)).ToList();
+            guards.Add(ui.GetMethods(f).Single(m => m.Name == "OnLobbyBrowserListUpdated" && m.GetParameters().Length == 1));
+            var autoJoin = ui.GetMethods(f).Single(m => m.Name == "BeginAutoJoinLobbyJoin" &&
+                m.GetParameters().Length == 2 && m.GetParameters()[1].ParameterType == typeof(bool));
+            guards.Add(autoJoin);
+            var leave = Require(ui, "Leave");
+            if (leave.ReturnType != typeof(void))
+            {
+                throw new InvalidOperationException("Unexpected Leave method signature.");
+            }
+
+            harmony!.Patch(leave, postfix: new HarmonyMethod(typeof(Plugin), nameof(LanLeavePostfix)));
             guards.Add(Require(ct, "ChangeIsPublic", typeof(bool)));
             foreach (var m in guards)
             {
@@ -136,14 +175,12 @@ public sealed partial class Plugin
                 harmony!.Patch(m, prefix: new HarmonyMethod(typeof(Plugin), nameof(BlockPreviewOnlineAction)));
             }
             previewSyncType = ui.Assembly.GetType("UISync", true)!;
-            previewApplyPrivacy = Require(previewSyncType, "ApplyIsPublicSliderState", typeof(bool));
             var publicAction = Require(previewSyncType, "UpdateIsPublic", typeof(bool));
             var capacityAction = Require(previewSyncType, "ChangeMaximumPlayerCount", typeof(int));
-            harmony!.Patch(previewApplyPrivacy, prefix: new HarmonyMethod(typeof(Plugin), nameof(PreviewPrivateVisual)));
             harmony.Patch(publicAction, prefix: new HarmonyMethod(typeof(Plugin), nameof(BlockPreviewOnlineAction)));
             harmony.Patch(capacityAction, prefix: new HarmonyMethod(typeof(Plugin), nameof(BlockPreviewOnlineAction)));
             previewEnabled = true;
-            Log.LogInfo(nativeMode ? "[LAN PREVIEW] Radmin native host UI experiment; no cloud membership fabricated. Close game to leave." : "[LAN PREVIEW] Ready. Loopback-only native TV visual experiment; no cloud membership is fabricated. Close game to leave.");
+            Log.LogInfo("[LAN PREVIEW] Native LAN lobby UI hooks installed.");
         }
         catch (Exception ex)
         {
@@ -154,7 +191,12 @@ public sealed partial class Plugin
 
     public static bool BlockPreviewOnlineAction(MethodBase __originalMethod)
     {
-        if (!previewEnabled && !nativeMode)
+        if (!lanModeSelected)
+        {
+            return true;
+        }
+
+        if (!previewEnabled && !lanSupportEnabled)
         {
             return true;
         }
@@ -165,14 +207,6 @@ public sealed partial class Plugin
         }
 
         return false;
-    }
-
-    public static void PreviewPrivateVisual(ref bool __0)
-    {
-        if (previewEnabled && menuStarted && previewAttempted)
-        {
-            __0 = false;
-        }
     }
 
     private static object? UiProperty(object obj, string name) => obj.GetType().GetProperty(name,
@@ -201,7 +235,7 @@ public sealed partial class Plugin
 
     private static void TryLocalPreview(object ui, bool ready)
     {
-        if (!previewEnabled)
+        if (!previewEnabled || !lanModeSelected)
         {
             return;
         }
@@ -238,7 +272,6 @@ public sealed partial class Plugin
                 previewStopPolling!.Invoke(ui, null);
                 previewNavigate!.Invoke(ui, new[] { previewMain });
                 previewSetState!.Invoke(ui, new[] { previewConnected });
-                previewPrivacyApplied = false;
                 logger?.LogInfo(restore ? "[LAN PREVIEW] Restored native lobby after round; session flags unchanged." :
                     "[LAN PREVIEW] Requested MainMenu and Connected visual state. Session flags unchanged.");
             }
@@ -266,16 +299,6 @@ public sealed partial class Plugin
 
         try
         {
-            if (!previewPrivacyApplied && previewSyncType != null)
-            {
-                var sync = previewSyncType.GetProperty("Singleton", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
-                if (sync != null)
-                {
-                    previewApplyPrivacy!.Invoke(sync, new object[] { false });
-                    previewPrivacyApplied = true;
-                    logger?.LogInfo("[LAN PREVIEW] Public slider set visually off; public and capacity actions blocked.");
-                }
-            }
             var nm = connector == null ? null : UiProperty(connector, "NetworkManager");
             var sm = nm == null ? null : UiProperty(nm, "ServerManager");
             var clients = sm == null ? null : UiProperty(sm, "Clients");
@@ -300,16 +323,19 @@ public sealed partial class Plugin
         if (code != null)
         {
             var text = code.GetType().GetProperty("text", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (text?.CanWrite == true && text.PropertyType == typeof(string) && !string.Equals(text.GetValue(code) as string, nativeMode ? nativeHostCode : "LAN OK", StringComparison.Ordinal))
+            if (text?.CanWrite == true && text.PropertyType == typeof(string) && !string.Equals(text.GetValue(code) as string, lanModeSelected ? nativeHostCode : "LAN OK", StringComparison.Ordinal))
             {
-                text.SetValue(code, nativeMode ? nativeHostCode : "LAN OK");
+                text.SetValue(code, lanModeSelected ? nativeHostCode : "LAN OK");
             }
         }
     }
 
     public static void MenuStatusTick(object __instance)
     {
-        if (nativeMode && nativeClientRequested)
+        EnsureLanModeToggle(__instance);
+        TickLanBrowser(__instance);
+        OpenPendingLanLobbyScreen(__instance);
+        if (lanModeSelected && nativeClientRequested)
         {
             NativeClientTick(__instance);
             return;
@@ -403,12 +429,15 @@ public sealed partial class Plugin
 
     public static bool MenuCodePrefix(object __instance, string __0)
     {
-        if (nativeMode)
+        if (!lanModeSelected)
         {
-            if (!NativeCodeSubmission(__instance, __0))
-            {
-                return false;
-            }
+            return true;
+        }
+
+        if (lanSupportEnabled)
+        {
+            QueueTypedLanCode(__instance, __0);
+            return false;
         }
         try
         {
@@ -427,7 +456,7 @@ public sealed partial class Plugin
                 logger?.LogWarning("[LAN MENU] Enter a six-character alphanumeric test code.");
                 return false;
             }
-            if (new[] { "IsPlayerInLobby", "IsJoiningMultiplayer", "IsSingleplayer", "IsStartingSingleplayer", "IsClientConnectedToServer", "HasValidRemoteSession" }.Any(ReadFlag) || !ReadFlag("CanStartSingleplayerSession"))
+            if (IsConnectorInSession() || !ReadFlag("CanStartSingleplayerSession"))
             {
                 logger?.LogWarning("[LAN MENU] Refused: game connector not idle or cannot start a local session.");
                 return false;
@@ -442,7 +471,11 @@ public sealed partial class Plugin
         }
         catch (Exception ex)
         {
-            logger?.LogError("[LAN MENU] Host request failed; restart game before retry: " + ex);
+            menuStarted = false;
+            menuUi = null;
+            menuClock.Reset();
+            StopHostTest();
+            logger?.LogError("[LAN MENU] Host request failed: " + ex);
         }
         return false;
     }

@@ -58,7 +58,7 @@ public sealed partial class Plugin
 
     private static bool IsActiveRoundLanHost()
     {
-        if (!nativeMode || !nativeReady || !requested || !menuStarted || !attempted || stopping ||
+        if (!lanModeSelected || !nativeReady || !requested || !menuStarted || !attempted || stopping ||
             nativeClientRequested || connector == null || testMultipass == null)
         {
             return false;

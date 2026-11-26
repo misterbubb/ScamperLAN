@@ -66,7 +66,7 @@ public sealed partial class Plugin
         }
     }
 
-    private static bool ShouldTraceLanFlow() => nativeMode && !stopping &&
+    private static bool ShouldTraceLanFlow() => lanModeSelected && !stopping &&
         ((nativeClientRequested && nativeClientSubmitted) || (requested && attempted && menuStarted && !nativeClientRequested));
 
     public static void LanFlowBefore(MethodBase __originalMethod, object[] __args)

@@ -18,35 +18,22 @@ public sealed partial class Plugin
     private void SetupHostTest()
     {
         var args = Environment.GetCommandLineArgs();
-        if (!nativeMode && !args.Contains("--scamperlan-host-test", StringComparer.Ordinal))
+        if (!lanSupportEnabled && !args.Contains("--scamperlan-host-test", StringComparer.Ordinal))
         {
             Log.LogInfo("[LAN HOST] Disabled; add --scamperlan-host-test to Steam launch options to opt in.");
             return;
         }
-        if (!nativeMode && args.Any(a => a.StartsWith("--scamperlan-join-test=", StringComparison.Ordinal)))
+        if (!lanSupportEnabled && args.Any(a => a.StartsWith("--scamperlan-join-test=", StringComparison.Ordinal)))
         {
             Log.LogError("[LAN HOST] Cannot enable host and join modes together.");
             return;
         }
-        var binds = nativeMode ? Array.Empty<string>() : args.Where(a => a.StartsWith("--scamperlan-bind=", StringComparison.Ordinal)).ToArray();
-        if (nativeMode)
+        var binds = lanSupportEnabled ? Array.Empty<string>() : args.Where(a => a.StartsWith("--scamperlan-bind=", StringComparison.Ordinal)).ToArray();
+        if (lanSupportEnabled)
         {
-            try
-            {
-                var local = LocalRadminAddresses().Distinct(StringComparer.Ordinal).ToArray();
-                if (local.Length != 1)
-                {
-                    throw new InvalidOperationException("Exactly one active Radmin IPv4 is required; connect Radmin before launching.");
-                }
-
-                bindAddress = local[0];
-                nativeHostCode = EncodeNativeCode(bindAddress);
-            }
-            catch (Exception ex)
-            {
-                Log.LogError("[LAN NATIVE] Adapter setup refused: " + ex.Message);
-                return;
-            }
+            // Tugboat owns one IPv4 listener. Accepting rooms on multiple adapters requires a
+            // wildcard bind, with subnet and route checks on the native admission callback.
+            bindAddress = "0.0.0.0";
         }
         if (binds.Length > 1)
         {
@@ -56,9 +43,9 @@ public sealed partial class Plugin
         if (binds.Length == 1)
         {
             var ip = binds[0].Substring("--scamperlan-bind=".Length);
-            if (!IsRadminAddress(ip) || !LocalRadminAddresses().Contains(ip, StringComparer.Ordinal))
+            if (!IsSupportedLanAddress(ip) || !LocalLanAddresses().Contains(ip, StringComparer.Ordinal))
             {
-                Log.LogError("[LAN HOST] Bind must be an IPv4 address assigned to your active Radmin VPN adapter.");
+                Log.LogError("[LAN HOST] Bind must be an IPv4 address assigned to an active supported private network adapter.");
                 return;
             }
             bindAddress = ip;
@@ -85,11 +72,12 @@ public sealed partial class Plugin
             }
 
             harmony!.Patch(Require(ct, "Awake"), postfix: new HarmonyMethod(typeof(Plugin), nameof(CaptureConnector)));
+            harmony.Patch(Require(ct, "Update"), postfix: new HarmonyMethod(typeof(Plugin), nameof(LanConnectorTick)));
             harmony.Patch(startMethod, postfix: new HarmonyMethod(typeof(Plugin), nameof(AfterLocalStart)));
             harmony.Patch(Require(ct, "StopTransportConnections"), prefix: new HarmonyMethod(typeof(Plugin), nameof(BeforeCleanup)));
             harmony.Patch(Require(ct, "StopAllConnections"), prefix: new HarmonyMethod(typeof(Plugin), nameof(BeforeCleanup)));
             requested = true;
-            Log.LogInfo($"[LAN HOST] Opt-in test ready: {bindAddress}:{TestPort} (IPv6 loopback only). Start a fresh singleplayer session.");
+            Log.LogInfo($"[LAN HOST] Ready on UDP {TestPort}. LAN admission checks the local or Radmin route.");
         }
         catch (Exception ex)
         {
@@ -117,7 +105,9 @@ public sealed partial class Plugin
 
     public static void AfterLocalStart(object __instance, bool __0, int __1, bool __result)
     {
-        if (!requested || attempted || stopping || __0 || __1 != YakIndex || !__result || (nativeMode && (!nativeReady || !menuStarted || nativeClientRequested)))
+        if (!requested || attempted || stopping || lanTransportSettings != null ||
+            __0 || __1 != YakIndex || !__result ||
+            (lanSupportEnabled && (!lanModeSelected || !nativeReady || !menuStarted || nativeClientRequested)))
         {
             return;
         }
@@ -135,25 +125,22 @@ public sealed partial class Plugin
                 return;
             }
             attempted = true;
-            var transport = getTransportMethod!.Invoke(__instance, new object[] { TugboatIndex });
-            if (transport == null)
-            {
-                throw new InvalidOperationException("Transport 2 is missing.");
-            }
+            var settings = new LanTransportSettings(__instance, server: true);
+            lanTransportSettings = settings;
+            testMultipass = __instance;
 
             var v4 = Enum.Parse(addressType!, "IPv4");
             var v6 = Enum.Parse(addressType!, "IPv6");
             bindMethod!.Invoke(__instance, new object[] { bindAddress, v4, TugboatIndex });
             bindMethod.Invoke(__instance, new object[] { "::1", v6, TugboatIndex });
-            var getter = Require(transport.GetType(), "GetServerBindAddress", addressType!);
-            if (!string.Equals(getter.Invoke(transport, new[] { v4 }) as string, bindAddress, StringComparison.Ordinal) ||
-                !string.Equals(getter.Invoke(transport, new[] { v6 }) as string, "::1", StringComparison.Ordinal))
+            var getter = Require(settings.Tugboat.GetType(), "GetServerBindAddress", addressType!);
+            if (!string.Equals(getter.Invoke(settings.Tugboat, new[] { v4 }) as string, bindAddress, StringComparison.Ordinal) ||
+                !string.Equals(getter.Invoke(settings.Tugboat, new[] { v6 }) as string, "::1", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException("Bind address verification failed; no listener started.");
             }
 
             portMethod!.Invoke(__instance, new object[] { TestPort, TugboatIndex });
-            testMultipass = __instance;
             logger?.LogInfo($"[LAN HOST] Requesting secondary Tugboat server on {bindAddress}:{TestPort}, leaving Yak client selected.");
             var result = startMethod!.Invoke(__instance, new object[] { true, TugboatIndex });
             logger?.LogInfo($"[LAN HOST] Start result={result}; Tugboat server={State(__instance, true, TugboatIndex)}; Yak server={State(__instance, true, YakIndex)}; Yak client={State(__instance, false, YakIndex)}");
@@ -169,26 +156,22 @@ public sealed partial class Plugin
         }
     }
 
-    public static void BeforeCleanup() => StopHostTest();
+    public static void BeforeCleanup()
+    {
+        StopNativeClient();
+        StopHostTest();
+    }
+    public static void LanConnectorTick()
+    {
+        // Restore only after the native cleanup call and transport callbacks have returned.
+        FinishLanTransportCleanup();
+        TickLanHosting();
+    }
+
     private static void StopHostTest()
     {
-        if (testMultipass == null || stopping)
-        {
-            return;
-        }
-
-        stopping = true;
-        try
-        {
-            if (State(testMultipass, true, TugboatIndex) != "Stopped")
-            {
-                logger?.LogInfo("[LAN HOST] Stop result=" + stopMethod!.Invoke(testMultipass, new object[] { true, TugboatIndex }));
-            }
-        }
-        catch (Exception ex)
-        {
-            logger?.LogWarning("[LAN HOST] Cleanup failed; close the game: " + ex.Message);
-        }
-        finally { testMultipass = null; stopping = false; }
+        discovery?.StopHosting();
+        advertisedRoom = null;
+        StopLanTransport(server: true);
     }
 }

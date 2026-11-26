@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Net;
-using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Reflection;
 using HarmonyLib;
@@ -39,17 +38,6 @@ public sealed partial class Plugin
         "IsClientConnectedToServer",
         "HasValidRemoteSession"
     };
-
-    private static bool IsRadminAddress(string text) =>
-        IPAddress.TryParse(text, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork &&
-        ip.ToString() == text && ip.GetAddressBytes()[0] == 26;
-
-    private static IEnumerable<string> LocalRadminAddresses() => NetworkInterface.GetAllNetworkInterfaces()
-        .Where(n => n.OperationalStatus == OperationalStatus.Up &&
-            (n.Name.Contains("Radmin", StringComparison.OrdinalIgnoreCase) ||
-             n.Description.Contains("Radmin", StringComparison.OrdinalIgnoreCase)))
-        .SelectMany(n => n.GetIPProperties().UnicastAddresses)
-        .Select(a => a.Address.ToString()).Where(IsRadminAddress);
 
     private void SetupJoinTest()
     {
@@ -97,13 +85,13 @@ public sealed partial class Plugin
         }
 
         var ip = joins[0][JoinArgumentPrefix.Length..];
-        var localAddresses = LocalRadminAddresses().ToArray();
-        if (!IsRadminAddress(ip) || localAddresses.Length == 0 ||
+        var localAddresses = LocalLanAddresses().ToArray();
+        if (!IsSupportedLanAddress(ip) || localAddresses.Length == 0 ||
             localAddresses.Contains(ip, StringComparer.Ordinal))
         {
             throw new InvalidOperationException(
-                "Join target must be another player's Radmin IPv4. " +
-                "An active local Radmin adapter is required.");
+                "Join target must be another player's supported private IPv4 address. " +
+                "Connect to the same private network first.");
         }
 
         return ip;

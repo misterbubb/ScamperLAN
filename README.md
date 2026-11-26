@@ -20,4 +20,6 @@ The six-character code represents the host's Radmin IPv4 address. It is not a pa
 
 ## Credits
 
+- **Contributors** — misterbubb and J_axon
+
 **J_axon** - Major help with testing this with me, love you bro bro.

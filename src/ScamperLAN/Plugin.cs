@@ -8,7 +8,7 @@ using HarmonyLib;
 
 namespace ScamperLAN;
 
-[BepInPlugin("scamperlan.diagnostics", "ScamperLAN", "1.0.0")]
+[BepInPlugin("scamperlan.diagnostics", "ScamperLAN", "1.1.5")]
 public sealed partial class Plugin : BasePlugin
 {
     private static ManualLogSource? logger;
@@ -35,21 +35,17 @@ public sealed partial class Plugin : BasePlugin
         Watch("FishNet.Runtime", "FishNet.Transporting.Yak.Yak",
             "StartConnection", "StopConnection", "HandleServerConnectionState", "HandleClientConnectionState");
         WatchTransportSelection();
-        nativeMode = Config.Bind("LAN", "Enabled", true, "Enable the experimental TV-driven LAN mode (default: true). False preserves vanilla matchmaking. Restart after changing.").Value || Environment.GetCommandLineArgs().Contains("--scamperlan-native", StringComparer.Ordinal);
-        Log.LogInfo(nativeMode ? "[LAN] Native LAN mode enabled; use the TV to host or join." : "[LAN] Native LAN mode disabled by configuration.");
+        lanSupportEnabled = true;
+        lanModeSelected = false;
+        Log.LogInfo("[LAN] Online mode selected. Use the TV selector to switch to LAN.");
         SetupHostTest();
-        if (!nativeMode)
-        {
-            SetupJoinTest();
-        }
-
         SetupMenuHostTest();
-        if (nativeMode)
+        if (lanSupportEnabled)
         {
             SetupRoundSync();
             SetupNativeLifecycleTrace();
         }
-        if (nativeMode || Environment.GetCommandLineArgs().Contains("--scamperlan-menu-host-test", StringComparer.Ordinal))
+        if (lanSupportEnabled || Environment.GetCommandLineArgs().Contains("--scamperlan-menu-host-test", StringComparer.Ordinal))
         {
             Watch("BezbroGames.Scamper", "StartZone", "StartGame", "StartGameLocal", "StartGameServer");
             Watch("BezbroGames.Scamper", "BezbroGames.Scamper.UI.MainUIHandler", "EnableSingleplayerMenu", "EnableClientMenu", "DisableClientMenu", "ApplyRoundStateUI", "OnDifficultySliderValueChanged");
@@ -57,7 +53,7 @@ public sealed partial class Plugin : BasePlugin
         }
         Watch("BezbroGames.Scamper", "BezbroGames.Scamper.Networking.ScamperNetworkAuthenticator", "OnRemoteConnection", "OnClientConnectionState", "SendClientReport", "OnClientReport", "OnAdmissionResult", "CompleteAdmission");
         Watch("BezbroGames.Scamper", "BezbroGames.Scamper.Networking.ScamperPlayerSpawner", "SceneManager_OnClientLoadedStartScenes", "ServerManager_OnRemoteConnectionState");
-        Log.LogInfo(nativeMode ? "Transport diagnostics ready. Use the TV keypad for LAN sessions; no automatic connection." : "Transport diagnostics ready. Start singleplayer from a fresh launch, then return to the menu.");
+        Log.LogInfo("Online remains the default. Use the TV selector to choose LAN; no automatic connection is made.");
     }
 
     private void Watch(string assembly, string typeName, params string[] names)
@@ -198,6 +194,8 @@ public sealed partial class Plugin : BasePlugin
     {
         StopNativeClient();
         StopHostTest();
+        FinishLanTransportCleanup();
+        ShutDownDiscovery(null);
         harmony?.UnpatchSelf();
         return true;
     }
