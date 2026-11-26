@@ -23,5 +23,6 @@ LAN rooms appear in **Find Code** automatically. If a firewall blocks LAN traffi
 
 ## Credits
 
-- **Contributors** - misterbubb and J_axon
-- **J_axon** - Major help with testing this with me, love you bro bro.
+**Contributors** - misterbubb and J_axon
+
+Scamper was developed and published by **Bezbro Games**. [Scamper on Steam](https://store.steampowered.com/app/2481930/Scamper/)
