@@ -4,7 +4,7 @@ An experimental BepInEx IL2CPP plugin for private Scamper LAN sessions.
 
 ## Requirements
 
-- Scamper and a compatible BepInEx 6 IL2CPP installation
+- Scamper and the **MoonSweepers BepInEx Pack 0.1.0** fork for BepInEx 6 IL2CPP. [MoonSweepers-BepInExPack](https://github.com/Andrew1431/MoonSweepers-BepInExPack)
 - A shared IPv4 network, such as the same local Wi-Fi or Ethernet network, or the same Radmin VPN
 - The same ScamperLAN build on all players
 
